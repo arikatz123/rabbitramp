@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Rabbi Ball vs Monsters</title>
+    <style>
+        canvas {
+            border: 2px solid black;
+            background-color: #008BAD;
+        }
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="800" height="400"></canvas>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Load images
+        const rabbiImg = new Image();
+        rabbiImg.src = 'rabbi.png';
+
+        const onionImg = new Image();
+        onionImg.src = 'alien.png';
+        
+        const carrotImg = new Image();
+        carrotImg.src = 'missile.png';
+        
+        // Image loading tracking
+        const images = [rabbiImg, onionImg, carrotImg];
+        let imagesLoaded = 0;
+        
+        // Preload all images
+        images.forEach(img => {
+            img.onload = () => {
+                imagesLoaded++;
+                if (imagesLoaded === images.length) {
+                    // All images loaded, now start the game
+                    startGame();
+                }
+            };
+            
+            // Fallback for loading errors
+            img.onerror = () => {
+                console.error("Error loading image: " + img.src);
+                imagesLoaded++;
+                if (imagesLoaded === images.length) {
+                    startGame();
+                }
+            };
+        });
+        
+        // Game variables
+        let player = {
+            x: 400,
+            y: 350,
+            width: 50,  // Increased size
+            height: 50, // Increased size
+            speed: 5,
+            dy: 0,
+            jumping: false
+        };
+        
+        let aliens = [];
+        let score = 0;
+        let combo = 0;
+        let comboMultiplier = 1;
+        let gameOver = false;
+        let ground = canvas.height - 50;
+        let gameStarted = false;
+        let flyingAlienHeight = 200; // Fixed height for flying aliens
+        let difficulty = 1;
+        let lastAlienTime = 0;
+        
+        // Update combo multiplier based on combo count
+        function updateComboMultiplier() {
+            if (combo === 0) {
+                comboMultiplier = 1;
+            } else if (combo === 1) {
+                comboMultiplier = 1.1;
+            } else if (combo === 2) {
+                comboMultiplier = 1.2;
+            } else if (combo === 3) {
+                comboMultiplier = 1.3;
+            } else {
+                comboMultiplier = 1.5;
+            }
+        }
+        
+        // Input handling
+        let keys = {};
+        document.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            if (gameOver && e.key === 'r') resetGame();
+            
+            // Jump with either Arrow Up or Space
+            if ((e.key === 'ArrowUp' || e.key === ' ') && !player.jumping && gameStarted) {
+                player.dy = -15;
+                player.jumping = true;
+            }
+        });
+        document.addEventListener('keyup', (e) => keys[e.key] = false);
+        
+        // Spawn aliens
+        function spawnAlien() {
+            if (gameOver || !gameStarted) return;
+            
+            // Check time since last alien spawn to avoid overcrowding
+            const currentTime = Date.now();
+            const minTimeBetweenAliens = Math.max(1000 - (difficulty * 50), 400); // Minimum time decreases with difficulty
+            
+            if (currentTime - lastAlienTime < minTimeBetweenAliens) {
+                // Schedule next spawn attempt
+                setTimeout(spawnAlien, 500);
+                return;
+            }
+            
+            lastAlienTime = currentTime;
+            
+            let side = Math.random() > 0.5 ? 'left' : 'right';
+            let type = Math.random() > 0.5 ? 'onion' : 'carrot';
+            
+            let alien = {
+                x: side === 'left' ? -50 : canvas.width,
+                // Align ground aliens with player height and make them bigger
+                y: type === 'onion' ? ground - 50 : flyingAlienHeight,
+                width: 50,  // Increased size
+                height: 50, // Increased size
+                speed: side === 'left' ? 2 * difficulty : -2 * difficulty, // Speed increases with difficulty
+                type: type,
+                pointValue: type === 'onion' ? 10 : 15,  // Flying aliens worth more
+                direction: side === 'left' ? 1 : -1 // 1 = right, -1 = left
+            };
+            
+            aliens.push(alien);
+            
+            // Schedule next spawn - time decreases with difficulty
+            let delay = Math.max(2000 - (difficulty * 100), 800) + Math.random() * 1000;
+            setTimeout(spawnAlien, delay);
+            
+            // Increase difficulty over time
+            if (currentTime - gameStartTime > 20000 * difficulty) { // Every 20 seconds
+                difficulty += 0.2;
+                console.log("Difficulty increased to", difficulty);
+            }
+        }
+        
+        let gameStartTime = 0;
+        
+        // Game loop
+        function update() {
+            if (gameOver || !gameStarted) return;
+            
+            // Player movement
+            if (keys['ArrowLeft'] && player.x > 0) player.x -= player.speed;
+            if (keys['ArrowRight'] && player.x < canvas.width - player.width) player.x += player.speed;
+            
+            // Apply gravity to player
+            player.y += player.dy;
+            if (player.jumping) {
+                player.dy += 0.8; // gravity
+            }
+            
+            // Check if landed on ground
+            if (player.y > ground - player.height) {
+                player.y = ground - player.height;
+                player.dy = 0;
+                player.jumping = false;
+                // Reset combo when touching ground
+                combo = 0;
+                updateComboMultiplier();
+            }
+            
+            // Move aliens and check collisions
+            for (let i = aliens.length - 1; i >= 0; i--) {
+                let alien = aliens[i];
+                alien.x += alien.speed;
+                
+                // Remove aliens that go off screen
+                if ((alien.speed > 0 && alien.x > canvas.width) || 
+                    (alien.speed < 0 && alien.x < -alien.width)) {
+                    aliens.splice(i, 1);
+                    continue;
+                }
+                
+                // Check for collision with player
+                if (checkCollision(player, alien)) {
+                    // If player is above alien (jumping on top)
+                    if (player.dy > 0 && player.y + player.height < alien.y + alien.height / 2) {
+                        // Remove the alien
+                        aliens.splice(i, 1);
+                        
+                        // Better bounce - reduced bounce for flying aliens
+                        player.dy = alien.type === 'onion' ? -13 : -14;
+                        
+                        // Increase combo and update multiplier
+                        combo++;
+                        updateComboMultiplier();
+                        
+                        // Add score with combo multiplier
+                        score += alien.pointValue * comboMultiplier;
+                    } else {
+                        // Game over
+                        gameOver = true;
+                    }
+                }
+            }
+            
+            draw();
+            requestAnimationFrame(update);
+        }
+        
+        // Check collision between two objects
+        function checkCollision(a, b) {
+            return a.x < b.x + b.width &&
+                   a.x + a.width > b.x &&
+                   a.y < b.y + b.height &&
+                   a.y + a.height > b.y;
+        }
+        
+        // Draw everything
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw sky background (original teal color)
+            ctx.fillStyle = '#008BAD';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw ground (original green)
+            ctx.fillStyle = '#00CC33';
+            ctx.fillRect(0, ground, canvas.width, 50);
+            
+            // Draw player (rabbi ball)
+            ctx.drawImage(rabbiImg, player.x, player.y, player.width, player.height);
+            
+            // Draw aliens (onions and carrots)
+            aliens.forEach(alien => {
+                if (alien.type === 'onion') {
+                    ctx.drawImage(onionImg, alien.x, alien.y, alien.width, alien.height);
+                } else {
+                    // Draw missile with proper direction
+                    ctx.save();
+                    if (alien.direction < 0) {
+                        // Draw right-to-left missile
+                        ctx.translate(alien.x + alien.width, alien.y);
+                        ctx.scale(-1, 1);
+                        ctx.drawImage(carrotImg, 0, 0, alien.width, alien.height);
+                    } else {
+                        // Draw left-to-right missile normally
+                        ctx.drawImage(carrotImg, alien.x, alien.y, alien.width, alien.height);
+                    }
+                    ctx.restore();
+                }
+            });
+            
+            // Draw score
+            ctx.fillStyle = 'white';
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 3;
+            ctx.font = 'bold 36px Arial';
+            ctx.textBaseline = 'top';
+            
+            let scoreText = `Score: ${Math.floor(score)}`;
+            ctx.strokeText(scoreText, 20, 20);
+            ctx.fillText(scoreText, 20, 20);
+            
+            // Draw combo multiplier if combo > 0
+            if (combo > 0) {
+                let comboText = `Combo: ${combo}x  (${comboMultiplier.toFixed(1)}x points)`;
+                ctx.font = 'bold 24px Arial';
+                ctx.strokeText(comboText, 20, 60);
+                ctx.fillText(comboText, 20, 60);
+            }
+            
+            // Draw instructions at start
+            if (score < 10 && !gameOver) {
+                ctx.textAlign = 'center';
+                ctx.font = 'bold 36px Arial';
+                ctx.strokeText("Jump on monsters!", canvas.width/2, 220);
+                ctx.fillText("Jump on monsters!", canvas.width/2, 220);
+                
+                ctx.font = 'bold 20px Arial';
+                ctx.strokeText("Use Arrow Keys or Space to move and jump", canvas.width/2, 260);
+                ctx.fillText("Use Arrow Keys or Space to move and jump", canvas.width/2, 260);
+                ctx.textAlign = 'left';
+            }
+            
+            // Draw game over
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = '40px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('Game Over!', canvas.width / 2, canvas.height / 2 - 40);
+                ctx.font = '24px Arial';
+                ctx.fillText(`Final Score: ${Math.floor(score)}`, canvas.width / 2, canvas.height / 2 + 10);
+                ctx.fillText('Press R to restart', canvas.width / 2, canvas.height / 2 + 50);
+                ctx.textAlign = 'left';
+            }
+            
+            // If game hasn't started yet
+            if (!gameStarted) {
+                // Draw loading screen
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = '30px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('Loading game...', canvas.width / 2, canvas.height / 2 - 15);
+                ctx.textAlign = 'left';
+            }
+        }
+        
+        // Reset the game
+        function resetGame() {
+            player = {
+                x: 400,
+                y: 350,
+                width: 50,
+                height: 50,
+                speed: 5,
+                dy: 0,
+                jumping: false
+            };
+            
+            aliens = [];
+            score = 0;
+            combo = 0;
+            comboMultiplier = 1;
+            gameOver = false;
+            difficulty = 1;
+            gameStartTime = Date.now();
+            
+            // Start spawning aliens again
+            spawnAlien();
+            
+            // Restart the game loop
+            update();
+        }
+        
+        // Start the game after all images load
+        function startGame() {
+            gameStarted = true;
+            gameStartTime = Date.now();
+            spawnAlien();
+            update();
+            
+            // Show initial frame
+            draw();
+        }
+        
+        // Show initial loading screen
+        draw();
+    </script>
+</body>
+</html>
